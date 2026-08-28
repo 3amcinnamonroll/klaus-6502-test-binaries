@@ -1,4 +1,6 @@
 ; ca65 port of Klaus Dormann's 6502_interrupt_test.a65 (GPL-3.0).
+; Modified 2026-08-28 for klaus-6502-test-binaries: D_clear can be supplied at
+; build time so one source builds both NMOS and CMOS test images.
 ; Mechanically converted from the as65 source at
 ; https://github.com/Klaus2m5/6502_65C02_functional_tests for assembly with
 ; cc65's ca65/ld65 — upstream ships as65 source only, no prebuilt bin.

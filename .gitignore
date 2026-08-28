@@ -1,5 +1,6 @@
-/.artifacts-*
-/artifacts.previous
+/.artifacts-stage-*
+/.artifacts.lock
+/artifacts/.current-*
 *.o
 *.lst
 *.map

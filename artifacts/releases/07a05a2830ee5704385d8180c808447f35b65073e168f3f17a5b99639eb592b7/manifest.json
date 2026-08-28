@@ -1,11 +1,22 @@
 {
-  "ca65": "ca65 V2.18 - N/A",
   "ca65_port_revision": "708af9b079b2f5e382684cc059d02afdfe6a6812",
-  "ld65": "ld65 V2.18 - N/A",
+  "feedback": {
+    "irq": {
+      "asserted": 1,
+      "bit": 0,
+      "sampling": "level"
+    },
+    "nmi": {
+      "asserted": 1,
+      "bit": 1,
+      "sampling": "rising-edge"
+    },
+    "port": "0xBFFC"
+  },
   "linker_config_sha256": "23648174c46a7d74f34d2fb0b9c7d0ea087db43c6d60195fd79457c830332f84",
   "official_upstream_revision": "7954e2dbb49c469ea286070bf46cdd71aeb29e4b",
   "schema": 1,
-  "source_sha256": "ff6b63d7697d3426ed10b024fd8dbe6c0084ce3bddb86e0eb8c6e2a6b47b8f2e",
+  "source_sha256": "c04cf7651e276742aea8e2a80439a8a6f119013a1c61145dc120d8a9aa2efb6d",
   "test": "Klaus Dormann 6502 interrupt test",
   "variants": [
     {
