@@ -1,0 +1,2 @@
+# Preserve whitespace in the mechanically converted upstream test source.
+/src/6502_interrupt_test.ca65 whitespace=-blank-at-eol,-blank-at-eof

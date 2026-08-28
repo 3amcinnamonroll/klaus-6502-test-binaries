@@ -1,0 +1,5 @@
+/.artifacts-*
+/artifacts.previous
+*.o
+*.lst
+*.map
