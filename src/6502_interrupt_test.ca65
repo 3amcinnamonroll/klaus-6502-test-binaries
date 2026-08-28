@@ -1,6 +1,6 @@
 ; ca65 port of Klaus Dormann's 6502_interrupt_test.a65 (GPL-3.0).
-; Modified 2026-08-28 for klaus-6502-test-binaries: D_clear can be supplied at
-; build time so one source builds both NMOS and CMOS test images.
+; Modified 2026-08-28 for klaus-6502-test-binaries: runtime entry points select
+; NMOS or CMOS interrupt behavior in one image.
 ; Mechanically converted from the as65 source at
 ; https://github.com/Klaus2m5/6502_65C02_functional_tests for assembly with
 ; cc65's ca65/ld65 — upstream ships as65 source only, no prebuilt bin.
@@ -9,6 +9,7 @@
 ; Klaus's original license header is retained below.
 .feature labels_without_colons
 .setcpu "6502"
+.export TEST_MODE, TEST_6502, TEST_65C02, SUCCESS_6502, SUCCESS_65C02
 
 ;
 ; 6 5 0 2   I N T E R R U P T   T E S T
@@ -90,11 +91,6 @@ I_filter    = $7f       ;filtering bit 7 = diag stop
 ;NMI_bit     = 1         ;bit number of feedback to NMI, -1 if not available
 ;I_filter    = $ff       ;no bits filtered
 
-;decimal mode flag during IRQ, NMI & BRK
-.ifndef D_clear
-D_clear     = 0         ;0 = not cleared (NMOS), 1 = cleared (CMOS)
-.endif
-
 ;configure memory - try to stay away from memory used by the system
 ;zero_page memory start address, 6 consecutive Bytes required
 zero_page = $a  
@@ -141,6 +137,17 @@ report = 0
         jmp *           ;test passed, no errors
         .endmacro
     .endif
+
+.macro check_interrupt_flags flags
+        lda lst_f
+        and TEST_MODE
+        sta EXPECTED_D
+        lda flags
+        eor lst_f       ;turn off unchanged bits
+        eor EXPECTED_D  ;account for CMOS clearing decimal mode when set
+        and #m8-fai     ;mask untested other flags
+        trap_ne         ;other flags (N,V,Z,C,D) changed
+.endmacro
     .if report = 1
 .macro trap a1, a2
         jsr report_error
@@ -214,6 +221,8 @@ irq_f   .res  1               ;flags
 nmi_a   .res  1               ;a register
 nmi_x   .res  1               ;x register
 nmi_f   .res  1               ;flags
+TEST_MODE .res 1              ;0=NMOS, decimal flag=CMOS
+EXPECTED_D .res 1             ;expected decimal-flag difference
 zp_bss
 
 ;fixed stack locations
@@ -232,6 +241,13 @@ data_bss
 
         .CODE
         .org code_segment
+TEST_6502
+        lda #0
+        beq select_mode
+TEST_65C02
+        lda #decmode
+select_mode
+        sta TEST_MODE
 start   cld
         lda #0           ;clear expected interrupts for 2nd run
         sta I_src
@@ -409,19 +425,7 @@ ld_vect lda vec_init,x
         tsx
         cpx #$ff-2      ;original accu & flags remain on stack
         trap_ne         ;returned SP
-        lda irq_f       ;flags seen in IRQ vector
-      .if D_clear = 1
-        and #decmode
-        trap_ne         ;D-flag not cleared
-        lda irq_f
-        eor lst_f       ;turn off unchanged bits
-        and #m8-fai-decmode ;mask untested other flags
-        trap_ne         ;other flags (N,V,Z,C) changed
-      .else
-        eor lst_f       ;turn off unchanged bits
-        and #m8-fai     ;mask untested other flags
-        trap_ne         ;other flags (N,V,Z,C,D) changed
-      .endif
+        check_interrupt_flags irq_f
         ldx #$ff        ;reset stack pointer
         txs
 ; test all other registers
@@ -497,19 +501,7 @@ ld_vect lda vec_init,x
         tsx
         cpx #$ff-2      ;original accu & flags remain on stack
         trap_ne         ;returned SP
-        lda irq_f       ;flags seen in IRQ vector
-      .if D_clear = 1
-        and #decmode
-        trap_ne         ;D-flag not cleared
-        lda irq_f
-        eor lst_f       ;turn off unchanged bits
-        and #m8-fai-decmode ;mask untested other flags
-        trap_ne         ;other flags (N,V,Z,C) changed
-      .else
-        eor lst_f       ;turn off unchanged bits
-        and #m8-fai     ;mask untested other flags
-        trap_ne         ;other flags (N,V,Z,C,D) changed
-      .endif
+        check_interrupt_flags irq_f
         ldx #$ff        ;reset stack pointer
         txs
 
@@ -530,19 +522,7 @@ ld_vect lda vec_init,x
         tsx
         cpx #$ff-2      ;original accu & flags remain on stack
         trap_ne         ;returned SP
-        lda irq_f       ;flags seen in IRQ vector
-      .if D_clear = 1
-        and #decmode
-        trap_ne         ;D-flag not cleared
-        lda irq_f
-        eor lst_f       ;turn off unchanged bits
-        and #m8-fai-decmode ;mask untested other flags
-        trap_ne         ;other flags (N,V,Z,C) changed
-      .else
-        eor lst_f       ;turn off unchanged bits
-        and #m8-fai     ;mask untested other flags
-        trap_ne         ;other flags (N,V,Z,C,D) changed
-      .endif
+        check_interrupt_flags irq_f
         ldx #$ff        ;reset stack pointer
         txs
 ; test all other registers
@@ -627,19 +607,7 @@ ld_vect lda vec_init,x
         tsx
         cpx #$ff-2      ;original accu & flags remain on stack
         trap_ne         ;returned SP
-        lda irq_f       ;flags seen in IRQ vector
-      .if D_clear = 1
-        and #decmode
-        trap_ne         ;D-flag not cleared
-        lda irq_f
-        eor lst_f       ;turn off unchanged bits
-        and #m8-fai-decmode ;mask untested other flags
-        trap_ne         ;other flags (N,V,Z,C) changed
-      .else
-        eor lst_f       ;turn off unchanged bits
-        and #m8-fai     ;mask untested other flags
-        trap_ne         ;other flags (N,V,Z,C,D) changed
-      .endif
+        check_interrupt_flags irq_f
         ldx #$ff        ;reset stack pointer
         txs
 
@@ -689,19 +657,7 @@ ld_vect lda vec_init,x
         tsx
         cpx #$ff-2      ;original accu & flags remain on stack
         trap_ne         ;returned SP
-        lda nmi_f       ;flags seen in NMI vector
-      .if D_clear = 1
-        and #decmode
-        trap_ne         ;D-flag not cleared
-        lda nmi_f
-        eor lst_f       ;turn off unchanged bits
-        and #m8-fai-decmode ;mask untested other flags
-        trap_ne         ;other flags (N,V,Z,C) changed
-      .else
-        eor lst_f       ;turn off unchanged bits
-        and #m8-fai     ;mask untested other flags
-        trap_ne         ;other flags (N,V,Z,C,D) changed
-      .endif
+        check_interrupt_flags nmi_f
         ldx #$ff        ;reset stack pointer
         txs
 ; test all other registers
@@ -777,19 +733,7 @@ ld_vect lda vec_init,x
         tsx
         cpx #$ff-2      ;original accu & flags remain on stack
         trap_ne         ;returned SP
-        lda nmi_f       ;flags seen in NMI vector
-      .if D_clear = 1
-        and #decmode
-        trap_ne         ;D-flag not cleared
-        lda nmi_f
-        eor lst_f       ;turn off unchanged bits
-        and #m8-fai-decmode ;mask untested other flags
-        trap_ne         ;other flags (N,V,Z,C) changed
-      .else
-        eor lst_f       ;turn off unchanged bits
-        and #m8-fai     ;mask untested other flags
-        trap_ne         ;other flags (N,V,Z,C,D) changed
-      .endif
+        check_interrupt_flags nmi_f
         ldx #$ff        ;reset stack pointer
         txs
 
@@ -842,7 +786,12 @@ ld_vect lda vec_init,x
 
 ; S U C C E S S ************************************************       
 ; -------------       
-        success         ;if you get here everything went well
+        lda TEST_MODE
+        beq SUCCESS_6502
+SUCCESS_65C02
+        jmp SUCCESS_65C02
+SUCCESS_6502
+        jmp SUCCESS_6502
 ; -------------       
 ; S U C C E S S ************************************************       
 ; check data_segment +0 to +2 for sequence of concurrent interrupts
