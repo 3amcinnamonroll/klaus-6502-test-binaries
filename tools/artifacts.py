@@ -165,7 +165,10 @@ def current_release() -> Path:
     if relative.is_absolute() or relative.parts[:1] != ("releases",) or ".." in relative.parts:
         raise ValueError("current artifact pointer is invalid")
     release = ARTIFACTS / relative
-    if pointer["manifest_sha256"] != sha256(release / "manifest.json"):
+    manifest_sha256 = sha256(release / "manifest.json")
+    if relative.name != manifest_sha256:
+        raise ValueError("current release directory is not content-addressed")
+    if pointer["manifest_sha256"] != manifest_sha256:
         raise ValueError("current artifact pointer checksum is stale")
     return release
 
