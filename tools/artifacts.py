@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import tempfile
 from typing import Iterator
+from urllib.request import urlopen
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -21,9 +22,9 @@ INTERRUPT_SOURCE = ROOT / "src" / "6502_interrupt_test.ca65"
 INTERRUPT_CONFIG = ROOT / "src" / "interrupt_test.cfg"
 DECIMAL_SOURCE = ROOT / "src" / "6502_decimal_test.ca65"
 DECIMAL_CONFIG = ROOT / "src" / "decimal_test.cfg"
-ARTIFACTS = ROOT / "artifacts"
-RELEASES = ARTIFACTS / "releases"
-CURRENT = ARTIFACTS / "current.json"
+BIN = ROOT / "bin"
+KLAUS_SOURCE = BIN / "source"
+BIN_BACKUP = ROOT / ".bin-backup"
 LOCK = ROOT / ".artifacts.lock"
 UPSTREAM_REVISION = "7954e2dbb49c469ea286070bf46cdd71aeb29e4b"
 PORT_REVISION = "708af9b079b2f5e382684cc059d02afdfe6a6812"
@@ -57,6 +58,34 @@ FEEDBACK = {
     "irq": {"bit": 0, "asserted": 1, "sampling": "level"},
     "nmi": {"bit": 1, "asserted": 1, "sampling": "rising-edge"},
 }
+OFFICIAL_BINARIES = (
+    (
+        "functional",
+        "6502_functional_test.bin",
+        0x0400,
+        0x3469,
+        "fa12bfc761e6f9057e4cc01a665a7b800ff01ae91f598af1e39a1201d01953fd",
+        "6502_functional_test.a65",
+        "f2665bd02288866c2b210b908e3f387926b4c9f0e0af5ad5513c474361ad1265",
+    ),
+    (
+        "extended_65c02",
+        "65C02_extended_opcodes_test.bin",
+        0x0400,
+        0x24F1,
+        "10a2a07fa240666fa610c46accebe8d42b1000feef3aae619da15a8d152869b2",
+        "65C02_extended_opcodes_test.a65c",
+        "72b1f57dc8f22f418ac2e23fc57c43821da84060679a7fcc3302071aa2f76736",
+    ),
+)
+
+
+def recover_publications() -> None:
+    if BIN_BACKUP.exists():
+        if BIN.exists():
+            shutil.rmtree(BIN_BACKUP)
+        else:
+            os.replace(BIN_BACKUP, BIN)
 
 
 @contextmanager
@@ -66,6 +95,7 @@ def artifact_lock() -> Iterator[None]:
             fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
             raise SystemExit("error: another artifact build, verify, or clean is running") from error
+        recover_publications()
         yield
 
 
@@ -220,11 +250,51 @@ def assemble_decimal(stage: Path) -> dict:
     return result
 
 
-def write_metadata(stage: Path, interrupt: dict, decimal: dict) -> None:
+def inspect_official_binary(
+    path: Path, entry_point: int, success_pc: int, expected_sha256: str
+) -> dict:
+    if path.stat().st_size != 65536:
+        raise ValueError(f"{path.name}: expected 65536 bytes")
+    data = path.read_bytes()
+    expected_loop = bytes((0x4C, success_pc & 0xFF, success_pc >> 8))
+    if data[success_pc:success_pc + 3] != expected_loop:
+        raise ValueError(f"{path.name}: missing success loop")
+    actual_sha256 = sha256(path)
+    if actual_sha256 != expected_sha256:
+        raise ValueError(f"{path.name}: checksum differs from the pinned official binary")
+    return {
+        "file": path.name,
+        "bytes": 65536,
+        "sha256": actual_sha256,
+        "entry_point": f"0x{entry_point:04X}",
+        "success_pc": f"0x{success_pc:04X}",
+    }
+
+
+def official_source(filename: str, expected_sha256: str, source_directory: Path) -> dict:
+    path = source_directory / filename
+    if sha256(path) != expected_sha256:
+        raise ValueError(f"{filename}: checksum differs from the pinned official source")
+    return {"file": f"bin/source/{filename}", "sha256": expected_sha256}
+
+
+def write_metadata(
+    stage: Path, interrupt: dict, decimal: dict, source_directory: Path
+) -> None:
+    official = [
+        inspect_official_binary(stage / name, entry_point, success_pc, binary_sha256)
+        for _, name, entry_point, success_pc, binary_sha256, _, _ in OFFICIAL_BINARIES
+    ]
+    sources = [
+        official_source(source_name, source_sha256, source_directory)
+        for _, _, _, _, _, source_name, source_sha256 in OFFICIAL_BINARIES
+    ]
     manifest = {
-        "schema": 2,
+        "schema": 3,
         "official_upstream_revision": UPSTREAM_REVISION,
         "tests": {
+            "functional": {"source": sources[0], "artifact": official[0]},
+            "extended_65c02": {"source": sources[1], "artifact": official[1]},
             "interrupt": {
                 "ca65_port_revision": PORT_REVISION,
                 "source_sha256": sha256(INTERRUPT_SOURCE),
@@ -245,20 +315,33 @@ def write_metadata(stage: Path, interrupt: dict, decimal: dict) -> None:
     (stage / "manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="ascii"
     )
-    items = [interrupt, decimal]
+    items = [*official, interrupt, decimal]
     sums = "".join(f"{item['sha256']}  {item['file']}\n" for item in items)
     (stage / "SHA256SUMS").write_text(sums, encoding="ascii")
 
 
-def verify_release(directory: Path) -> None:
+def verify_release(directory: Path, source_directory: Path = KLAUS_SOURCE) -> None:
     manifest = json.loads((directory / "manifest.json").read_text(encoding="ascii"))
     expected_fields = {
-        "schema": 2,
+        "schema": 3,
         "official_upstream_revision": UPSTREAM_REVISION,
     }
     for field, expected in expected_fields.items():
         if manifest.get(field) != expected:
             raise ValueError(f"manifest {field} is stale")
+
+    official = []
+    for key, name, entry_point, success_pc, binary_sha256, source_name, source_sha256 in OFFICIAL_BINARIES:
+        entry = manifest.get("tests", {}).get(key, {})
+        source = official_source(source_name, source_sha256, source_directory)
+        if entry.get("source") != source:
+            raise ValueError(f"{key} source metadata is stale")
+        artifact = inspect_official_binary(
+            directory / name, entry_point, success_pc, binary_sha256
+        )
+        if entry.get("artifact") != artifact:
+            raise ValueError(f"{key} manifest does not describe the current binary")
+        official.append(artifact)
 
     interrupt_manifest = manifest.get("tests", {}).get("interrupt", {})
     expected_interrupt = {
@@ -291,96 +374,109 @@ def verify_release(directory: Path) -> None:
     if decimal_manifest.get("artifact") != decimal:
         raise ValueError("decimal manifest does not describe the current binary")
 
-    items = [interrupt, decimal]
+    items = [*official, interrupt, decimal]
     expected_sums = "".join(f"{item['sha256']}  {item['file']}\n" for item in items)
     if (directory / "SHA256SUMS").read_text(encoding="ascii") != expected_sums:
         raise ValueError("SHA256SUMS is stale")
 
 
-def current_release() -> Path:
-    pointer = json.loads(CURRENT.read_text(encoding="ascii"))
-    if pointer.get("schema") != 1:
-        raise ValueError("current artifact pointer schema is unsupported")
-    relative = Path(pointer["release"])
-    if relative.is_absolute() or relative.parts[:1] != ("releases",) or ".." in relative.parts:
-        raise ValueError("current artifact pointer is invalid")
-    release = ARTIFACTS / relative
-    manifest_sha256 = sha256(release / "manifest.json")
-    if relative.name != manifest_sha256:
-        raise ValueError("current release directory is not content-addressed")
-    if pointer["manifest_sha256"] != manifest_sha256:
-        raise ValueError("current artifact pointer checksum is stale")
-    return release
-
-
-def verify_current() -> None:
-    release = current_release()
-    verify_release(release)
-    print(f"verified 2 binaries in {release}")
-
-
 def verify() -> None:
     with artifact_lock():
-        verify_current()
+        verify_release(BIN)
+        print(f"verified 4 binaries in {BIN}")
+
+
+def publish_directory(stage: Path, destination: Path, backup: Path) -> None:
+    if backup.exists():
+        if destination.exists():
+            shutil.rmtree(backup)
+        else:
+            os.replace(backup, destination)
+    if destination.exists():
+        os.replace(destination, backup)
+    try:
+        os.replace(stage, destination)
+    except BaseException:
+        if backup.exists() and not destination.exists():
+            os.replace(backup, destination)
+        raise
+    shutil.rmtree(backup, ignore_errors=True)
+
+
+def build_with_official(official_directory: Path) -> None:
+    stage = Path(tempfile.mkdtemp(prefix=".bin-stage-", dir=ROOT))
+    try:
+        for _, name, _, _, _, _, _ in OFFICIAL_BINARIES:
+            source = official_directory / name
+            if not source.exists():
+                raise ValueError(f"{source} is missing; run 'make update'")
+            shutil.copyfile(source, stage / name)
+        source_directory = official_directory / "source"
+        shutil.copytree(source_directory, stage / "source")
+        interrupt = assemble_interrupt(stage)
+        decimal = assemble_decimal(stage)
+        write_metadata(stage, interrupt, decimal, source_directory)
+        verify_release(stage, source_directory)
+        publish_directory(stage, BIN, BIN_BACKUP)
+        verify_release(BIN, source_directory)
+        print(f"built 4 binaries in {BIN}")
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
 
 
 def build() -> None:
     with artifact_lock():
-        stage = Path(tempfile.mkdtemp(prefix=".artifacts-stage-", dir=ROOT))
+        build_with_official(BIN)
+
+
+def update() -> None:
+    with artifact_lock():
+        stage = Path(tempfile.mkdtemp(prefix=".update-stage-", dir=ROOT))
         try:
-            interrupt = assemble_interrupt(stage)
-            decimal = assemble_decimal(stage)
-            write_metadata(stage, interrupt, decimal)
-            verify_release(stage)
-
-            release_id = sha256(stage / "manifest.json")
-            release = RELEASES / release_id
-            RELEASES.mkdir(parents=True, exist_ok=True)
-            if release.exists():
-                verify_release(release)
-                shutil.rmtree(stage)
-            else:
-                stage.rename(release)
-
-            pointer = {
-                "schema": 1,
-                "release": f"releases/{release_id}",
-                "manifest_sha256": sha256(release / "manifest.json"),
-            }
-            descriptor = tempfile.NamedTemporaryFile(
-                mode="w", encoding="ascii", dir=ARTIFACTS, prefix=".current-", delete=False
-            )
-            pointer_stage = Path(descriptor.name)
-            try:
-                with descriptor:
-                    json.dump(pointer, descriptor, indent=2, sort_keys=True)
-                    descriptor.write("\n")
-                    descriptor.flush()
-                    os.fsync(descriptor.fileno())
-                os.replace(pointer_stage, CURRENT)
-            finally:
-                pointer_stage.unlink(missing_ok=True)
-            verify_current()
+            source_directory = stage / "source"
+            source_directory.mkdir()
+            for _, name, entry_point, success_pc, binary_sha256, source_name, source_sha256 in OFFICIAL_BINARIES:
+                url = (
+                    "https://raw.githubusercontent.com/"
+                    f"Klaus2m5/6502_65C02_functional_tests/{UPSTREAM_REVISION}/bin_files/{name}"
+                )
+                with urlopen(url) as response, (stage / name).open("wb") as output:
+                    shutil.copyfileobj(response, output)
+                inspect_official_binary(
+                    stage / name, entry_point, success_pc, binary_sha256
+                )
+                source_url = (
+                    "https://raw.githubusercontent.com/"
+                    f"Klaus2m5/6502_65C02_functional_tests/{UPSTREAM_REVISION}/{source_name}"
+                )
+                with urlopen(source_url) as response, (source_directory / source_name).open("wb") as output:
+                    shutil.copyfileobj(response, output)
+                official_source(source_name, source_sha256, source_directory)
+            build_with_official(stage)
         finally:
-            if stage.exists():
-                shutil.rmtree(stage)
+            shutil.rmtree(stage, ignore_errors=True)
 
 
 def clean() -> None:
     with artifact_lock():
-        if ARTIFACTS.exists():
-            shutil.rmtree(ARTIFACTS)
-        for stage in ROOT.glob(".artifacts-stage-*"):
-            if stage.is_dir():
-                shutil.rmtree(stage)
+        for pattern in (
+            ".bin-stage-*",
+            ".update-stage-*",
+            ".bin-backup",
+        ):
+            for stage in ROOT.glob(pattern):
+                if stage.is_dir():
+                    shutil.rmtree(stage)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("build", "verify", "clean"))
+    parser.add_argument("action", choices=("build", "update", "verify", "clean"))
     args = parser.parse_args()
     if args.action == "build":
         build()
+    elif args.action == "update":
+        update()
     elif args.action == "verify":
         verify()
     else:

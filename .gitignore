@@ -1,6 +1,7 @@
-/.artifacts-stage-*
+/.bin-stage-*
+/.bin-backup
+/.update-stage-*
 /.artifacts.lock
-/artifacts/.current-*
 *.o
 *.lst
 *.map

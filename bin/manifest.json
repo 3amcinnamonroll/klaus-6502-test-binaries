@@ -1,6 +1,6 @@
 {
   "official_upstream_revision": "7954e2dbb49c469ea286070bf46cdd71aeb29e4b",
-  "schema": 2,
+  "schema": 3,
   "tests": {
     "decimal": {
       "artifact": {
@@ -64,6 +64,32 @@
       "source_author": "Bruce Clark",
       "source_license": "public-domain",
       "source_sha256": "226788fc6e29b3e0b66f0757cd792658ce17bf19f68a82aae8f573cf686e1ade"
+    },
+    "extended_65c02": {
+      "artifact": {
+        "bytes": 65536,
+        "entry_point": "0x0400",
+        "file": "65C02_extended_opcodes_test.bin",
+        "sha256": "10a2a07fa240666fa610c46accebe8d42b1000feef3aae619da15a8d152869b2",
+        "success_pc": "0x24F1"
+      },
+      "source": {
+        "file": "bin/source/65C02_extended_opcodes_test.a65c",
+        "sha256": "72b1f57dc8f22f418ac2e23fc57c43821da84060679a7fcc3302071aa2f76736"
+      }
+    },
+    "functional": {
+      "artifact": {
+        "bytes": 65536,
+        "entry_point": "0x0400",
+        "file": "6502_functional_test.bin",
+        "sha256": "fa12bfc761e6f9057e4cc01a665a7b800ff01ae91f598af1e39a1201d01953fd",
+        "success_pc": "0x3469"
+      },
+      "source": {
+        "file": "bin/source/6502_functional_test.a65",
+        "sha256": "f2665bd02288866c2b210b908e3f387926b4c9f0e0af5ad5513c474361ad1265"
+      }
     },
     "interrupt": {
       "artifact": {
